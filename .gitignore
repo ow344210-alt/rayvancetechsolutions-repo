@@ -1,0 +1,27 @@
+# Local Chrome test profile (browser caches, cookies, session data) - never upload
+.chrome-header-check/
+
+# Local QA / audit screenshots (not part of the website)
+*.png
+!assets/
+!assets/**/*.png
+
+# Environment & secrets
+.env
+.env.*
+*.pem
+*.key
+config.local.json
+
+# Editors & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & build artifacts
+*.log
+node_modules/
+dist/
+build/

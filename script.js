@@ -725,60 +725,212 @@ document.addEventListener('DOMContentLoaded', () => {
     honeypot.hidden = true;
     contactForm.append(honeypot);
 
+    const status = contactForm.querySelector('.form-status');
+    const submitButton = contactForm.querySelector('[type="submit"]');
+    const budgetInput = contactForm.querySelector('#budget');
+    const budgetSuggestions = contactForm.querySelector('#budget-suggestions');
+    const budgetItems = budgetSuggestions ? [...budgetSuggestions.querySelectorAll('[role="option"]')] : [];
+    const budgetToggle = contactForm.querySelector('.budget-toggle');
+    const fieldsToValidate = ['name', 'email', 'company', 'budget', 'phone', 'message']
+      .map((id) => contactForm.querySelector(`#${id}`))
+      .filter(Boolean);
+
+    let submitting = false;
+
+    const normalizeBudget = (value) => {
+      const raw = (value || '').trim();
+      if (!raw) return '';
+      if (/^under\s+PKR\s*[\d,]+$/i.test(raw)) return raw;
+      const match = raw.match(/(\d[\d,]*)(\+?)/);
+      if (!match) return '';
+      const digits = match[1].replace(/\D/g, '');
+      if (!digits) return '';
+      const band = match[2] === '+' ? '+' : '';
+      return `PKR ${Number(digits).toLocaleString('en-US')}${band}`;
+    };
+
+    const showMessage = (text, kind) => {
+      status.textContent = text;
+      status.dataset.kind = kind || '';
+    };
+
     const validateField = (field) => {
       const error = field.closest('.field').querySelector('.error');
-      const emailIsInvalid = field.type === 'email' && !/^\S+@\S+\.\S+$/.test(field.value);
-      const message = !field.value.trim() ? 'This field is required.' : emailIsInvalid ? 'Enter a valid email address.' : '';
+      const value = field.value.trim();
+      let message = '';
+      if (field.required && !value) {
+        message = 'This field is required.';
+      } else if (field.id === 'email' && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        message = 'Enter a valid email address.';
+      } else if (field.id === 'budget' && value && !normalizeBudget(value)) {
+        message = 'Enter a budget amount in PKR.';
+      } else if (field.id === 'phone' && value && !/^[0-9+()\- ]{7,30}$/.test(value)) {
+        message = 'Enter a valid phone number.';
+      }
       error.textContent = message;
       field.setAttribute('aria-invalid', String(Boolean(message)));
       return !message;
     };
 
-    contactForm.querySelectorAll('[required]').forEach((field) => {
-      field.addEventListener('input', () => validateField(field));
+    const validateAll = () => {
+      let firstInvalid = null;
+      fieldsToValidate.forEach((field) => {
+        const valid = validateField(field);
+        if (!valid && !firstInvalid) firstInvalid = field;
+      });
+      return firstInvalid;
+    };
+
+    fieldsToValidate.forEach((field) => {
+      field.addEventListener('input', () => {
+        if (field.id === 'budget' && !/\d/.test(field.value)) return;
+        validateField(field);
+      });
       field.addEventListener('blur', () => validateField(field));
     });
 
+    let openSuggestionList = () => {};
+    let closeSuggestionList = () => {};
+    if (budgetInput && budgetSuggestions && budgetItems.length) {
+      const stripPrefix = (s) => (s || '').replace(/^(under|pkr)+/, '');
+      const queryIndexes = () => {
+        const query = stripPrefix(budgetInput.value.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+        budgetItems.forEach((item) => {
+          const label = stripPrefix(item.textContent.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+          item.hidden = query.length > 0 && !label.startsWith(query);
+        });
+      };
+      const scrollToHighlight = () => {
+        const activeItem = budgetItems.find((item) => item.getAttribute('aria-selected') === 'true');
+        if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
+      };
+      openSuggestionList = () => {
+        if (budgetSuggestions.hidden) {
+          budgetSuggestions.hidden = false;
+          budgetInput.setAttribute('aria-expanded', 'true');
+          budgetToggle.setAttribute('aria-expanded', 'true');
+          queryIndexes();
+        }
+      };
+      closeSuggestionList = () => {
+        budgetSuggestions.hidden = true;
+        budgetInput.setAttribute('aria-expanded', 'false');
+        budgetToggle.setAttribute('aria-expanded', 'false');
+      };
+      const acceptItem = (item) => {
+        budgetInput.value = item.dataset.value;
+        closeSuggestionList();
+        validateField(budgetInput);
+        budgetInput.focus();
+      };
+      budgetInput.addEventListener('focus', openSuggestionList);
+      budgetInput.addEventListener('click', openSuggestionList);
+      budgetInput.addEventListener('input', () => {
+        openSuggestionList();
+        queryIndexes();
+        if (/\d/.test(budgetInput.value)) validateField(budgetInput);
+      });
+      budgetToggle.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (budgetSuggestions.hidden) openSuggestionList();
+        else closeSuggestionList();
+      });
+      budgetInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          closeSuggestionList();
+          return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (budgetSuggestions.hidden) openSuggestionList();
+          const visibleItems = budgetItems.filter((item) => !item.hidden);
+          if (!visibleItems.length) return;
+          const currentIndex = visibleItems.findIndex((item) => item.getAttribute('aria-selected') === 'true');
+          const delta = event.key === 'ArrowDown' ? 1 : -1;
+          const nextIndex = (currentIndex + delta + visibleItems.length) % visibleItems.length;
+          visibleItems.forEach((item) => item.setAttribute('aria-selected', 'false'));
+          visibleItems[nextIndex].setAttribute('aria-selected', 'true');
+          scrollToHighlight();
+          return;
+        }
+        if (event.key === 'Enter') {
+          const selected = budgetItems.find((item) => item.getAttribute('aria-selected') === 'true' && !item.hidden);
+          if (selected) {
+            event.preventDefault();
+            acceptItem(selected);
+          } else {
+            closeSuggestionList();
+          }
+          return;
+        }
+        if (event.key === 'Tab' || event.key === 'Home' || event.key === 'End') {
+          closeSuggestionList();
+        }
+      });
+      budgetItems.forEach((item) => {
+        item.addEventListener('mouseenter', () => {
+          budgetItems.forEach((opt) => opt.setAttribute('aria-selected', 'false'));
+          item.setAttribute('aria-selected', 'true');
+        });
+        item.addEventListener('click', () => acceptItem(item));
+      });
+      window.addEventListener('pointerdown', (event) => {
+        if (budgetInput.closest('.budget-input') && budgetInput.closest('.budget-input').contains(event.target)) return;
+        closeSuggestionList();
+      });
+    }
+
     contactForm.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const requiredFields = [...contactForm.querySelectorAll('[required]')];
-      const invalidField = requiredFields.find((field) => !validateField(field));
-      const isValid = !invalidField;
+      if (submitting) return;
+      const invalidField = validateAll();
+      if (invalidField) {
+        showMessage('Please correct the highlighted fields.', 'error');
+        invalidField.focus();
+        return;
+      }
+      fieldsToValidate.forEach((field) => { field.value = field.value.trim(); });
+      if (budgetInput) budgetInput.value = normalizeBudget(budgetInput.value);
 
-      const status = contactForm.querySelector('.form-status');
-      if (isValid) {
-        const formData = new FormData(contactForm);
-        formData.set('_subject', `New Ravance Tech Solutions enquiry from ${formData.get('name')}`);
-        formData.set('_template', 'table');
+      submitting = true;
+      submitButton.disabled = true;
+      submitButton.setAttribute('aria-busy', 'true');
+      showMessage('Sending your enquiry…');
 
-        const submitButton = contactForm.querySelector('[type="submit"]');
-        submitButton.disabled = true;
-        submitButton.setAttribute('aria-busy', 'true');
-        status.textContent = 'Sending your enquiry…';
-        status.style.color = isDarkTheme() ? '#4ade80' : '#15803d';
+      const formData = new FormData(contactForm);
+      formData.set('_subject', 'New Website Enquiry — RayVance Tech Solutions');
+      formData.set('_template', 'table');
+      formData.set('_replyto', formData.get('Email') || '');
 
-        try {
-          const response = await fetch(`https://formsubmit.co/ajax/${primaryEmail}`, {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 25000);
+      const minHold = new Promise((resolve) => window.setTimeout(resolve, 400));
+
+      try {
+        const [response] = await Promise.all([
+          fetch(`https://formsubmit.co/ajax/${primaryEmail}`, {
             method: 'POST',
             headers: { Accept: 'application/json' },
-            body: formData
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok || result.success === false) throw new Error('Submission failed');
+            body: formData,
+            signal: controller.signal
+          }),
+          minHold
+        ]);
+        window.clearTimeout(timeoutId);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) throw new Error('Submission failed');
 
-          contactForm.reset();
-          status.textContent = 'Thanks—your enquiry has been sent. We will reply within one business day.';
-        } catch (error) {
-          status.textContent = `We could not send your enquiry. Please email us at ${primaryEmail}.`;
-          status.style.color = isDarkTheme() ? '#f87171' : '#dc2626';
-        } finally {
-          submitButton.disabled = false;
-          submitButton.removeAttribute('aria-busy');
-        }
-      } else {
-        status.textContent = 'Please correct the highlighted fields.';
-        status.style.color = isDarkTheme() ? '#f87171' : '#dc2626';
-        invalidField.focus();
+        contactForm.reset();
+        if (budgetInput) budgetInput.value = '';
+        closeSuggestionList();
+        showMessage('Thanks—your enquiry has been sent. We will reply within one business day.', 'success');
+      } catch (error) {
+        window.clearTimeout(timeoutId);
+        showMessage("We couldn't send your enquiry right now. Please try again.", 'error');
+      } finally {
+        submitting = false;
+        submitButton.disabled = false;
+        submitButton.removeAttribute('aria-busy');
       }
     });
   }
